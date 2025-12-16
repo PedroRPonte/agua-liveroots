@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Roots | Elemento Agua</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+    <style>
+        :root {
+            /* PALETA DE COLORES: AGUA PROFUNDA */
+            --bg-color: #081014; 
+            --text-color: #d1e8e8; 
+            --accent-color: #4cc9f0; 
+            --circle-color: rgba(76, 201, 240, 0.02);
+            --circle-active: rgba(76, 201, 240, 0.25);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Helvetica Neue', sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            transition: background-color 2s ease;
+        }
+
+        /* TÍTULO PRINCIPAL: LIVE ROOTS */
+        h1 {
+            font-weight: 400;
+            letter-spacing: 0.3em;
+            margin-bottom: 0.5rem; /* Espacio pequeño antes del subtítulo */
+            font-size: 1.8rem;
+            color: var(--text-color);
+            z-index: 10;
+            text-transform: uppercase;
+        }
+
+        /* SUBTÍTULO: ELEMENTO AGUA */
+        h2 {
+            font-weight: 300;
+            letter-spacing: 0.15em;
+            margin-bottom: 2rem;
+            font-size: 1rem;
+            opacity: 0.7; /* Un poco más apagado para jerarquía */
+            color: var(--accent-color);
+            z-index: 10;
+            text-transform: uppercase;
+        }
+
+        #status {
+            font-size: 0.8rem;
+            opacity: 0.5;
+            margin-bottom: 2rem;
+            font-family: monospace;
+            text-align: center;
+            z-index: 10;
+            min-height: 1.5em;
+        }
+
+        button {
+            background: transparent;
+            border: 1px solid var(--accent-color);
+            color: var(--text-color);
+            padding: 15px 30px;
+            font-size: 0.9rem;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            transition: all 0.5s ease;
+            border-radius: 50px;
+            z-index: 10;
+        }
+
+        button:hover {
+            background: var(--accent-color);
+            color: var(--bg-color);
+            box-shadow: 0 0 20px rgba(76, 201, 240, 0.3);
+        }
+
+        #visual-anchor {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 300px;
+            height: 300px;
+            z-index: 1;
+        }
+
+        .orb {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: var(--circle-color);
+            transform: scale(1);
+            transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1), background 0.6s ease-out;
+            filter: blur(30px);
+        }
+
+        .orb.pulse {
+            transform: scale(1.2);
+            background: var(--circle-active);
+            transition: transform 0.1s ease-out, background 0.1s ease-out;
+        }
+
+        .orb.disconnected {
+            background: transparent;
+            transform: scale(0.1);
+        }
+
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>LIVE ROOTS</h1>
+    <h2>ELEMENTO AGUA</h2>
+
+    <div id="status">Esperando conexión...</div>
+    
+    <button id="start-btn">INICIAR AGUA</button>
+
+    <div id="visual-anchor">
+        <div class="orb disconnected" id="orb"></div>
+    </div>
+
+    <script>
+        // ==========================================
+        // CONFIGURACIÓN GENERAL
+        // ==========================================
+
+        let midiAccess = null;
+        let lastNoteTime = 0;
+
+        // --- AJUSTES ANTI-SATURACIÓN ---
+        // Aumenté el intervalo mínimo a 150ms. 
+        // Si entran notas más rápido que esto, se ignoran para proteger el audio.
+        const MIN_NOTE_INTERVAL = 150; 
+        
+        // Volumen del fondo (-Infinity es silencio total)
+        const AMBIENT_MAX_VOLUME = -50; 
+        
+        const startBtn = document.getElementById('start-btn');
+        const statusDiv = document.getElementById('status');
+        const orb = document.getElementById('orb');
+
+        let synth, ambientNoise, ambientFilter, reverb, delay;
+        
+        const SCALE = [0, 2, 4, 7, 9]; 
+
+        // ==========================================
+        // INICIO
+        // ==========================================
+
+        startBtn.addEventListener('click', async () => {
+            try {
+                startBtn.innerText = "INICIANDO...";
+                await Tone.start();
+                setupAudioEngine();
+                setupMIDI();
+                startBtn.classList.add('hidden');
+            } catch (e) {
+                console.error(e);
+                statusDiv.innerText = "Error: " + e.message;
+            }
+        });
+
+        // ==========================================
+        // MOTOR DE AUDIO (OPTIMIZADO)
+        // ==========================================
+
+        function setupAudioEngine() {
+            // A. MELODÍA (LIMITADA)
+            // Agregamos 'maxPolyphony: 6'. 
+            // Esto evita que suenen más de 6 notas a la vez, eliminando los cortes por CPU.
+            synth = new Tone.PolySynth(Tone.Synth, {
+                maxPolyphony: 6, 
+                oscillator: { type: "sine" },
+                envelope: {
+                    attack: 0.01,
+                    decay: 0.4,
+                    sustain: 0,
+                    release: 1.2
+                }
+            });
+            
+            // Bajamos un poco el volumen general del sinte para evitar distorsión digital
+            synth.volume.value = -6; 
+
+            // B. AMBIENTE (MÍNIMO)
+            ambientNoise = new Tone.Noise("brown"); 
+            ambientFilter = new Tone.Filter(200, "highpass"); 
+            
+            ambientNoise.connect(ambientFilter);
+            ambientFilter.toDestination();
+            ambientNoise.volume.value = -100; 
+            ambientNoise.start();
+
+            // C. EFECTOS
+            reverb = new Tone.Reverb({ decay: 7, wet: 0.5 }).toDestination();
+            delay = new Tone.PingPongDelay({ delayTime: "8n", feedback: 0.4, wet: 0.3 }).connect(reverb);
+            synth.connect(delay);
+            
+            Tone.Destination.volume.value = -100; 
+        }
+
+        // ==========================================
+        // LÓGICA MIDI
+        // ==========================================
+
+        function setupMIDI() {
+            if (navigator.requestMIDIAccess) {
+                navigator.requestMIDIAccess().then(onMIDISuccess, onMIDIFailure);
+            } else { statusDiv.innerText = "Navegador no soporta MIDI."; }
+        }
+
+        function onMIDISuccess(midi) {
+            midiAccess = midi;
+            updateConnectionState(midiAccess);
+            midiAccess.onstatechange = () => updateConnectionState(midiAccess);
+            for (let input of midiAccess.inputs.values()) { 
+                input.onmidimessage = handleMIDIMessage; 
+            }
+        }
+
+        function updateConnectionState(midi) {
+            const inputs = Array.from(midi.inputs.values());
+            const isConnected = inputs.length > 0 && inputs.some(i => i.state !== 'disconnected');
+
+            if (isConnected) {
+                statusDiv.innerText = "Conectado · Fluyendo";
+                statusDiv.style.color = "#4cc9f0";
+                orb.classList.remove('disconnected');
+                
+                Tone.Destination.volume.rampTo(-5, 2); 
+                if(ambientNoise) ambientNoise.volume.rampTo(AMBIENT_MAX_VOLUME, 3);
+
+            } else {
+                statusDiv.innerText = "Esperando conexión...";
+                statusDiv.style.color = "#d1e8e8";
+                orb.classList.add('disconnected');
+                
+                Tone.Destination.volume.rampTo(-100, 2);
+                if(ambientNoise) ambientNoise.volume.rampTo(-100, 2);
+            }
+        }
+
+        function onMIDIFailure() { statusDiv.innerText = "Error acceso MIDI"; }
+
+        function handleMIDIMessage(message) {
+            const [command, noteRaw, velocity] = message.data;
+            if (command === 144 && velocity > 0) triggerPlantEvent(noteRaw, velocity);
+        }
+
+        function midiToFreq432(midiNote) {
+            return 432 * Math.pow(2, (midiNote - 69) / 12);
+        }
+
+        function quantizeToScale(midiNote) {
+            const octave = Math.floor(midiNote / 12);
+            const noteInOctave = midiNote % 12;
+            let closest = SCALE[0];
+            let minDiff = Math.abs(noteInOctave - closest);
+            for (let i = 1; i < SCALE.length; i++) {
+                let diff = Math.abs(noteInOctave - SCALE[i]);
+                if (diff < minDiff) { minDiff = diff; closest = SCALE[i]; }
+            }
+            return (octave * 12) + closest;
+        }
+
+        function triggerPlantEvent(rawNote, velocity) {
+            const now = Date.now();
+            
+            // FILTRO DE TIEMPO:
+            // Si la nota llega antes de 150ms de la anterior, la ignoramos.
+            if (now - lastNoteTime < MIN_NOTE_INTERVAL) return; 
+            
+            lastNoteTime = now;
+
+            const quantizedNote = quantizeToScale(rawNote) + 12; 
+            const frequency = midiToFreq432(quantizedNote);
+            
+            // VELOCITY HUMANIZADO:
+            // Aseguramos que el volumen mínimo sea 0.4 para que no suene "roto" por estar muy bajo
+            const humanVel = (velocity / 127) * (0.6 + Math.random() * 0.4); 
+            
+            // Disparo de nota (la polifonía se gestiona sola gracias a maxPolyphony)
+            synth.triggerAttackRelease(frequency, "32n", Tone.now(), humanVel);
+
+            triggerVisualPulse(velocity);
+        }
+
+        function triggerVisualPulse(velocity) {
+            orb.classList.add('pulse');
+            const intensity = velocity / 127;
+            document.documentElement.style.setProperty('--circle-active', `rgba(76, 201, 240, ${0.15 + (intensity * 0.3)})`);
+            setTimeout(() => { orb.classList.remove('pulse'); }, 150); 
+        }
+    </script>
+</body>
+</html>
